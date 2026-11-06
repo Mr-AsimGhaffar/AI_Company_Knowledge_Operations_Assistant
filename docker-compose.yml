@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: workora-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: workora
+      POSTGRES_PASSWORD: workora
+      POSTGRES_DB: workora
+    ports:
+      - "5432:5432"
+    volumes:
+      - workora_pgdata:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workora -d workora"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  workora_pgdata:

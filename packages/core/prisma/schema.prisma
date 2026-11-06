@@ -1,0 +1,122 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+enum DocStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum ToolStatus {
+  PENDING_APPROVAL
+  REJECTED
+  EXECUTED
+  FAILED
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role     @default(EMPLOYEE)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  documents     Document[]
+  conversations Conversation[]
+  toolCalls     ToolCallLog[]  @relation("RequestedBy")
+  approvals     ToolCallLog[]  @relation("ApprovedBy")
+}
+
+model Document {
+  id           String    @id @default(uuid())
+  title        String
+  fileName     String
+  mimeType     String
+  size         Int
+  hash         String    @unique
+  status       DocStatus @default(PENDING)
+  error        String?
+  chunkCount   Int       @default(0)
+  // Roles allowed to retrieve this document. ADMIN is always included.
+  visibility   Role[]
+  uploadedById String
+  uploadedBy   User      @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  chunks Chunk[]
+}
+
+model Chunk {
+  id         String                 @id @default(uuid())
+  documentId String
+  document   Document               @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  position   Int
+  content    String
+  // { page } for PDFs, { sheet, rows } for spreadsheets
+  metadata   Json
+  embedding  Unsupported("vector(768)")?
+
+  @@index([documentId])
+}
+
+model Conversation {
+  id        String    @id @default(uuid())
+  title     String
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+
+  @@index([userId, updatedAt])
+}
+
+model Message {
+  id             String        @id @default(uuid())
+  conversationId String
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String // "user" | "assistant"
+  content        String
+  citations      Json?
+  createdAt      DateTime      @default(now())
+  toolCalls      ToolCallLog[]
+
+  @@index([conversationId, createdAt])
+}
+
+model ToolCallLog {
+  id             String      @id @default(uuid())
+  tool           String
+  args           Json
+  result         Json?
+  status         ToolStatus
+  isWrite        Boolean     @default(false)
+  userId         String
+  user           User        @relation("RequestedBy", fields: [userId], references: [id])
+  approvedById   String?
+  approvedBy     User?       @relation("ApprovedBy", fields: [approvedById], references: [id])
+  conversationId String?
+  messageId      String?
+  message        Message?    @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([createdAt])
+  @@index([status])
+}
