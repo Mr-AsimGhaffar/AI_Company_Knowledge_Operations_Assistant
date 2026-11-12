@@ -7,7 +7,7 @@ import {
   searchIssues,
   updateIssueStatus,
 } from "./integrations/jira";
-import { postMessage } from "./integrations/slack";
+import { findSlackUsers, postMessage, prepareSlackMessage } from "./integrations/slack";
 import { getFile, listCommits, listPullRequests } from "./integrations/github";
 
 export interface ToolDef {
@@ -20,6 +20,13 @@ export interface ToolDef {
 }
 
 const repoDesc = "Repository as 'owner/name' or just the repo name";
+const slackMessageShape = {
+  text: z.string().min(1).max(3000),
+  recipientName: z.string().trim().min(1).max(100).optional().describe("Name or @username of the Slack user to DM"),
+  recipientEmail: z.string().email().optional().describe("Email address of the Slack user to DM"),
+  recipientId: z.string().regex(/^[UW][A-Z0-9]+$/).optional().describe("Slack user ID, only when explicitly supplied or selected"),
+  channel: z.string().regex(/^[CGD][A-Z0-9]+$/).optional().describe("Explicit Slack channel or conversation ID"),
+};
 
 export const tools: ToolDef[] = [
   {
@@ -96,25 +103,27 @@ export const tools: ToolDef[] = [
     run: (a) => updateIssueStatus(a),
   },
   {
+    name: "slack_find_users",
+    write: false,
+    description: "Find active Slack users by name or @username. Multiple matches require the user to choose; never guess.",
+    shape: {
+      query: z.string().trim().min(1).max(100).describe("Name or @username to search"),
+    },
+    run: (a: { query: string }) => findSlackUsers(a.query),
+  },
+  {
+    name: "slack_prepare_message",
+    write: false,
+    description: "Resolve a Slack message destination without sending. Multiple name matches require the user to choose.",
+    shape: slackMessageShape,
+    run: (a) => prepareSlackMessage(a),
+  },
+  {
     name: "slack_post_message",
     write: true,
     description:
-      "Send a Slack direct message to a user by email, or post to a channel. Requires human approval.",
-    shape: {
-      text: z.string().min(1).max(3000),
-      recipientEmail: z
-        .string()
-        .email()
-        .optional()
-        .describe("Email address of the Slack user to DM"),
-      channel: z
-        .string()
-        .regex(/^[CGD][A-Z0-9]+$/)
-        .optional()
-        .describe(
-          "Slack channel or conversation ID; omit for the default channel",
-        ),
-    },
+      "Send a Slack DM by name, username, email or explicitly selected user ID, or post to an explicit channel ID. Provide exactly one destination. Requires human approval.",
+    shape: slackMessageShape,
     run: (a) => postMessage(a),
   },
   {

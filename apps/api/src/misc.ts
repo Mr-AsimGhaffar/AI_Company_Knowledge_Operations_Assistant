@@ -10,7 +10,7 @@ miscRouter.use(requireAuth);
 const integrations = () => [
   { id: "gemini", name: "Gemini", description: `Chat model ${config.GEMINI_MODEL} + embeddings`, configured: geminiConfigured() },
   { id: "jira", name: "Jira", description: config.JIRA_PROJECT_KEY ? `Project ${config.JIRA_PROJECT_KEY}` : "Issues", configured: jiraConfigured() },
-  { id: "slack", name: "Slack", description: config.SLACK_DEFAULT_CHANNEL_ID ? `Default channel ${config.SLACK_DEFAULT_CHANNEL_ID}` : "Messaging", configured: slackConfigured() },
+  { id: "slack", name: "Slack", description: "Direct messages and explicit channel posts", configured: slackConfigured() },
   { id: "github", name: "GitHub", description: allowedRepos().join(", ") || "Repositories", configured: githubConfigured() },
 ];
 

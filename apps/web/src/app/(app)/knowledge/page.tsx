@@ -1,35 +1,106 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BookOpen, FileSpreadsheet, FileText, Trash2, UploadCloud } from "lucide-react";
+import {
+  BookOpen,
+  FileSpreadsheet,
+  FileText,
+  Trash2,
+  UploadCloud,
+} from "lucide-react";
 import { api, type Role } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cn, formatDate, formatSize } from "@/lib/utils";
-import { Badge, Button, Card, EmptyState, PageHeader, Select, Skeleton, statusLabel, statusTone, useToast } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  Select,
+  Skeleton,
+  statusLabel,
+  statusTone,
+  useToast,
+} from "@/components/ui";
 
 interface Doc {
-  id: string; title: string; fileName: string; mimeType: string; size: number;
-  status: string; error: string | null; chunkCount: number; visibility: Role[]; createdAt: string;
+  id: string;
+  title: string;
+  fileName: string;
+  mimeType: string;
+  size: number;
+  status: string;
+  error: string | null;
+  chunkCount: number;
+  visibility: Role[];
+  createdAt: string;
   uploadedBy: { name: string };
 }
 
-const visibilityLabel = (v: Role[]) => (v.includes("EMPLOYEE") ? "Everyone" : v.includes("MANAGER") ? "Managers & admins" : "Admins only");
+type UploadStatus = "queued" | "uploading" | "indexing" | "ready" | "failed";
+interface UploadItem {
+  id: string;
+  name: string;
+  status: UploadStatus;
+  documentId?: string;
+  error?: string;
+}
+
+const visibilityLabel = (v: Role[]) =>
+  v.includes("EMPLOYEE")
+    ? "Everyone"
+    : v.includes("MANAGER")
+      ? "Managers & admins"
+      : "Admins only";
 
 export default function KnowledgePage() {
   const { user } = useAuth();
   const toast = useToast();
   const [docs, setDocs] = useState<Doc[] | null>(null);
+  const [loadError, setLoadError] = useState("");
   const [query, setQuery] = useState("");
   const [visibility, setVisibility] = useState("ALL");
   const [uploading, setUploading] = useState(false);
+  const [uploadQueue, setUploadQueue] = useState<UploadItem[]>([]);
   const [drag, setDrag] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   const canManage = user?.role === "ADMIN" || user?.role === "MANAGER";
 
-  const load = useCallback(() => api<{ documents: Doc[] }>("/api/documents").then((r) => setDocs(r.documents)).catch((e) => toast(e.message, "error")), [toast]);
-  useEffect(() => { load(); }, [load]);
+  const load = useCallback(async () => {
+    try {
+      const r = await api<{ documents: Doc[] }>("/api/documents");
+      setDocs(r.documents);
+      setLoadError("");
+      setUploadQueue((queue) =>
+        queue.map((item) => {
+          const doc = r.documents.find((d) => d.id === item.documentId);
+          if (!doc) return item;
+          if (doc.status === "READY")
+            return { ...item, status: "ready", error: undefined };
+          if (doc.status === "FAILED")
+            return {
+              ...item,
+              status: "failed",
+              error: doc.error ?? "Indexing failed.",
+            };
+          return item;
+        }),
+      );
+    } catch (e) {
+      setLoadError(
+        e instanceof Error ? e.message : "Unable to load documents.",
+      );
+    }
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  const processing = docs?.some((d) => d.status === "PENDING" || d.status === "PROCESSING");
+  const processing = docs?.some(
+    (d) => d.status === "PENDING" || d.status === "PROCESSING",
+  );
   useEffect(() => {
     if (!processing) return;
     const t = setInterval(load, 3000);
@@ -37,56 +108,199 @@ export default function KnowledgePage() {
   }, [processing, load]);
 
   async function upload(files: FileList | File[]) {
+    if (uploading) return;
+    const queued = Array.from(files).map((file, index) => ({
+      id: `${Date.now()}-${index}-${file.name}`,
+      file,
+    }));
+    setUploadQueue((items) => [
+      ...items,
+      ...queued.map(({ id, file }) => ({
+        id,
+        name: file.name,
+        status: "queued" as const,
+      })),
+    ]);
     setUploading(true);
-    for (const file of Array.from(files)) {
+    for (const { id, file } of queued) {
+      setUploadQueue((items) =>
+        items.map((item) =>
+          item.id === id ? { ...item, status: "uploading" } : item,
+        ),
+      );
       const form = new FormData();
       form.append("file", file);
       form.append("visibility", visibility);
       try {
-        await api("/api/documents", { method: "POST", body: form });
-        toast(`Uploaded ${file.name}. Indexing…`);
+        const result = await api<{ document: { id: string } }>(
+          "/api/documents",
+          { method: "POST", body: form },
+        );
+        setUploadQueue((items) =>
+          items.map((item) =>
+            item.id === id
+              ? { ...item, status: "indexing", documentId: result.document.id }
+              : item,
+          ),
+        );
       } catch (e) {
-        toast(`${file.name}: ${e instanceof Error ? e.message : "upload failed"}`, "error");
+        setUploadQueue((items) =>
+          items.map((item) =>
+            item.id === id
+              ? {
+                  ...item,
+                  status: "failed",
+                  error: e instanceof Error ? e.message : "Upload failed.",
+                }
+              : item,
+          ),
+        );
       }
     }
     setUploading(false);
-    load();
+    await load();
   }
 
   async function remove(d: Doc) {
     if (!confirm(`Delete "${d.title}" and its indexed content?`)) return;
-    await api(`/api/documents/${d.id}`, { method: "DELETE" }).then(() => toast("Document deleted")).catch((e) => toast(e.message, "error"));
+    await api(`/api/documents/${d.id}`, { method: "DELETE" })
+      .then(() => toast("Document deleted"))
+      .catch((e) => toast(e.message, "error"));
     load();
   }
 
-  const filtered = docs?.filter((d) => d.title.toLowerCase().includes(query.toLowerCase()) || d.fileName.toLowerCase().includes(query.toLowerCase()));
-  const Icon = (d: Doc) => (d.fileName.toLowerCase().endsWith(".xlsx") ? FileSpreadsheet : FileText);
+  const filtered = docs?.filter(
+    (d) =>
+      d.title.toLowerCase().includes(query.toLowerCase()) ||
+      d.fileName.toLowerCase().includes(query.toLowerCase()),
+  );
+  const Icon = (d: Doc) =>
+    d.fileName.toLowerCase().endsWith(".xlsx") ? FileSpreadsheet : FileText;
 
   return (
     <>
-      <PageHeader title="Knowledge base" description="Documents the assistant can search and cite. PDF and XLSX supported." />
+      <PageHeader
+        title="Knowledge base"
+        description="Documents the assistant can search and cite. PDF and XLSX supported."
+      />
 
       {canManage && (
         <Card className="mb-6 p-4 sm:p-5">
           <div
-            onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDrag(true);
+            }}
             onDragLeave={() => setDrag(false)}
-            onDrop={(e) => { e.preventDefault(); setDrag(false); if (e.dataTransfer.files.length) upload(e.dataTransfer.files); }}
-            className={cn("flex flex-col items-center rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors", drag ? "border-brand-500 bg-brand-50 dark:bg-brand-600/10" : "border-line")}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDrag(false);
+              if (e.dataTransfer.files.length) upload(e.dataTransfer.files);
+            }}
+            className={cn(
+              "flex flex-col items-center rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors",
+              drag
+                ? "border-brand-500 bg-brand-50 dark:bg-brand-600/10"
+                : "border-line",
+            )}
           >
             <UploadCloud className="size-9 text-brand-500" />
             <p className="mt-2 text-sm font-medium">Drag & drop files here</p>
             <p className="text-xs text-muted">PDF or XLSX, up to 25 MB each</p>
             <div className="mt-4 flex w-full max-w-xs flex-col gap-3 sm:max-w-none sm:flex-row sm:items-end sm:justify-center">
-              <Select label="Who can see it" value={visibility} onChange={(e) => setVisibility(e.target.value)} className="sm:w-56">
+              <Select
+                label="Who can see it"
+                value={visibility}
+                onChange={(e) => setVisibility(e.target.value)}
+                className="sm:w-56"
+              >
                 <option value="ALL">Everyone</option>
                 <option value="MANAGERS">Managers & admins</option>
                 <option value="ADMINS">Admins only</option>
               </Select>
-              <Button onClick={() => input.current?.click()} loading={uploading}>Choose files</Button>
+              <Button
+                onClick={() => input.current?.click()}
+                loading={uploading}
+              >
+                Choose files
+              </Button>
             </div>
-            <input ref={input} type="file" multiple accept=".pdf,.xlsx" hidden onChange={(e) => { if (e.target.files?.length) upload(e.target.files); e.target.value = ""; }} />
+            <input
+              ref={input}
+              type="file"
+              multiple
+              accept=".pdf,.xlsx"
+              hidden
+              onChange={(e) => {
+                if (e.target.files?.length) upload(e.target.files);
+                e.target.value = "";
+              }}
+            />
           </div>
+        </Card>
+      )}
+
+      {uploadQueue.length > 0 && (
+        <Card className="mb-6 p-4 sm:p-5">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold">Upload progress</h2>
+            {uploadQueue.some(
+              (item) => item.status === "ready" || item.status === "failed",
+            ) && (
+              <Button
+                variant="ghost"
+                className="min-h-8 px-2 text-xs"
+                onClick={() =>
+                  setUploadQueue((items) =>
+                    items.filter(
+                      (item) =>
+                        item.status !== "ready" && item.status !== "failed",
+                    ),
+                  )
+                }
+              >
+                Clear finished
+              </Button>
+            )}
+          </div>
+          <ul className="divide-y divide-line" aria-live="polite">
+            {uploadQueue.map((item) => {
+              const label =
+                item.status === "ready"
+                  ? "Ready"
+                  : item.status === "failed"
+                    ? "Failed"
+                    : item.status === "indexing"
+                      ? "Indexing"
+                      : item.status === "uploading"
+                        ? "Uploading"
+                        : "Queued";
+              const tone =
+                item.status === "ready"
+                  ? "green"
+                  : item.status === "failed"
+                    ? "red"
+                    : item.status === "queued"
+                      ? "gray"
+                      : "blue";
+              return (
+                <li
+                  key={item.id}
+                  className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{item.name}</p>
+                    {item.error && (
+                      <p className="mt-0.5 text-xs text-red-600">
+                        {item.error}
+                      </p>
+                    )}
+                  </div>
+                  <Badge tone={tone}>{label}</Badge>
+                </li>
+              );
+            })}
+          </ul>
         </Card>
       )}
 
@@ -101,15 +315,37 @@ export default function KnowledgePage() {
           />
         </div>
 
-        {!filtered ? (
-          <div className="space-y-3 p-4">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-14" />)}</div>
+        {loadError ? (
+          <div className="p-4">
+            <ErrorState message={loadError} onRetry={load} />
+          </div>
+        ) : !filtered ? (
+          <div className="space-y-3 p-4">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} className="h-14" />
+            ))}
+          </div>
         ) : filtered.length === 0 ? (
-          <EmptyState icon={<BookOpen className="size-6" />} title={docs?.length ? "No matching documents" : "No documents yet"} description={canManage ? "Upload a PDF or spreadsheet to get started." : "A manager can upload documents for the assistant."} />
+          <EmptyState
+            icon={<BookOpen className="size-6" />}
+            title={docs?.length ? "No matching documents" : "No documents yet"}
+            description={
+              canManage
+                ? "Upload a PDF or spreadsheet to get started."
+                : "A manager can upload documents for the assistant."
+            }
+          />
         ) : (
           <>
             <table className="hidden w-full text-sm md:table">
               <thead className="text-left text-xs uppercase tracking-wide text-muted">
-                <tr><th className="px-5 py-3 font-medium">Document</th><th className="px-3 py-3 font-medium">Status</th><th className="px-3 py-3 font-medium">Access</th><th className="px-3 py-3 font-medium">Uploaded</th><th className="w-12" /></tr>
+                <tr>
+                  <th className="px-5 py-3 font-medium">Document</th>
+                  <th className="px-3 py-3 font-medium">Status</th>
+                  <th className="px-3 py-3 font-medium">Access</th>
+                  <th className="px-3 py-3 font-medium">Uploaded</th>
+                  <th className="w-12" />
+                </tr>
               </thead>
               <tbody className="divide-y divide-line">
                 {filtered.map((d) => {
@@ -119,14 +355,43 @@ export default function KnowledgePage() {
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-3">
                           <I className="size-5 shrink-0 text-brand-600" />
-                          <div className="min-w-0"><p className="truncate font-medium">{d.title}</p><p className="text-xs text-muted">{d.fileName} · {formatSize(d.size)}{d.status === "READY" && ` · ${d.chunkCount} passages`}</p></div>
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{d.title}</p>
+                            <p className="text-xs text-muted">
+                              {d.fileName} · {formatSize(d.size)}
+                              {d.status === "READY" &&
+                                ` · ${d.chunkCount} passages`}
+                            </p>
+                          </div>
                         </div>
-                        {d.error && <p className="mt-1 text-xs text-red-600">{d.error}</p>}
+                        {d.error && (
+                          <p className="mt-1 text-xs text-red-600">{d.error}</p>
+                        )}
                       </td>
-                      <td className="px-3 py-3"><Badge tone={statusTone(d.status)}>{statusLabel(d.status)}</Badge></td>
-                      <td className="px-3 py-3 text-muted">{visibilityLabel(d.visibility)}</td>
-                      <td className="px-3 py-3 text-muted">{formatDate(d.createdAt)}<br /><span className="text-xs">by {d.uploadedBy.name}</span></td>
-                      <td className="px-3 py-3">{canManage && <button onClick={() => remove(d)} className="cursor-pointer rounded-lg p-2 text-muted hover:bg-surface-2 hover:text-red-600" aria-label={`Delete ${d.title}`}><Trash2 className="size-4" /></button>}</td>
+                      <td className="px-3 py-3">
+                        <Badge tone={statusTone(d.status)}>
+                          {statusLabel(d.status)}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-3 text-muted">
+                        {visibilityLabel(d.visibility)}
+                      </td>
+                      <td className="px-3 py-3 text-muted">
+                        {formatDate(d.createdAt)}
+                        <br />
+                        <span className="text-xs">by {d.uploadedBy.name}</span>
+                      </td>
+                      <td className="px-3 py-3">
+                        {canManage && (
+                          <button
+                            onClick={() => remove(d)}
+                            className="cursor-pointer rounded-lg p-2 text-muted hover:bg-surface-2 hover:text-red-600"
+                            aria-label={`Delete ${d.title}`}
+                          >
+                            <Trash2 className="size-4" />
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -139,11 +404,35 @@ export default function KnowledgePage() {
                 return (
                   <li key={d.id} className="space-y-2 p-4">
                     <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 items-start gap-3"><I className="mt-0.5 size-5 shrink-0 text-brand-600" /><div className="min-w-0"><p className="break-words font-medium">{d.title}</p><p className="text-xs text-muted">{formatSize(d.size)} · {visibilityLabel(d.visibility)}</p></div></div>
-                      {canManage && <button onClick={() => remove(d)} className="cursor-pointer rounded-lg p-2 text-muted hover:text-red-600" aria-label={`Delete ${d.title}`}><Trash2 className="size-4" /></button>}
+                      <div className="flex min-w-0 items-start gap-3">
+                        <I className="mt-0.5 size-5 shrink-0 text-brand-600" />
+                        <div className="min-w-0">
+                          <p className="break-words font-medium">{d.title}</p>
+                          <p className="text-xs text-muted">
+                            {formatSize(d.size)} ·{" "}
+                            {visibilityLabel(d.visibility)}
+                          </p>
+                        </div>
+                      </div>
+                      {canManage && (
+                        <button
+                          onClick={() => remove(d)}
+                          className="cursor-pointer rounded-lg p-2 text-muted hover:text-red-600"
+                          aria-label={`Delete ${d.title}`}
+                        >
+                          <Trash2 className="size-4" />
+                        </button>
+                      )}
                     </div>
-                    <div className="flex items-center justify-between text-xs text-muted"><Badge tone={statusTone(d.status)}>{statusLabel(d.status)}</Badge><span>{formatDate(d.createdAt)}</span></div>
-                    {d.error && <p className="text-xs text-red-600">{d.error}</p>}
+                    <div className="flex items-center justify-between text-xs text-muted">
+                      <Badge tone={statusTone(d.status)}>
+                        {statusLabel(d.status)}
+                      </Badge>
+                      <span>{formatDate(d.createdAt)}</span>
+                    </div>
+                    {d.error && (
+                      <p className="text-xs text-red-600">{d.error}</p>
+                    )}
                   </li>
                 );
               })}

@@ -5,7 +5,7 @@ import { Activity, Check, Eye, FileJson, X } from "lucide-react";
 import { api, type ToolStatus } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { formatDate, toolLabel } from "@/lib/utils";
-import { Badge, Button, Card, EmptyState, PageHeader, Select, Skeleton, statusLabel, statusTone, useToast } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Select, Skeleton, statusLabel, statusTone, useToast } from "@/components/ui";
 
 interface Entry {
   id: string; tool: string; args: unknown; result: unknown; status: ToolStatus; isWrite: boolean; createdAt: string;
@@ -16,13 +16,20 @@ export default function ActivityPage() {
   const { user } = useAuth();
   const toast = useToast();
   const [entries, setEntries] = useState<Entry[] | null>(null);
+  const [loadError, setLoadError] = useState("");
   const [status, setStatus] = useState("");
   const [selectedEntry, setSelectedEntry] = useState<Entry | null>(null);
   const canApprove = user?.role === "ADMIN" || user?.role === "MANAGER";
 
   const load = useCallback(() => {
-    api<{ toolCalls: Entry[] }>(`/api/activity${status ? `?status=${status}` : ""}`).then((r) => setEntries(r.toolCalls)).catch((e) => toast(e.message, "error"));
-  }, [status, toast]);
+    setLoadError("");
+    api<{ toolCalls: Entry[] }>(`/api/activity${status ? `?status=${status}` : ""}`)
+      .then((r) => setEntries(r.toolCalls))
+      .catch((e) => {
+        setEntries(null);
+        setLoadError(e instanceof Error ? e.message : "Unable to load activity.");
+      });
+  }, [status]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     if (!selectedEntry) return;
@@ -56,6 +63,24 @@ export default function ActivityPage() {
     </button>
   );
 
+  const SlackDestination = ({ e }: { e: Entry }) => {
+    if (e.tool !== "slack_post_message" || e.status !== "PENDING_APPROVAL" || typeof e.args !== "object" || e.args === null) return null;
+    const args = e.args as Record<string, unknown>;
+    const destination = typeof args.recipientDisplayName === "string"
+      ? `${args.recipientDisplayName}${typeof args.recipientUsername === "string" ? ` (@${args.recipientUsername})` : ""} · ${String(args.recipientId)}`
+      : typeof args.recipientEmail === "string"
+        ? `Email (not yet resolved): ${args.recipientEmail}. Reject and recreate this request before approving.`
+        : typeof args.channel === "string"
+          ? `Channel: ${args.channel}`
+          : "Destination not resolved. Reject and recreate this request before approving.";
+    return (
+      <div className="mt-2 max-w-sm rounded-lg border border-brand-200 bg-brand-50 p-2 text-xs dark:border-brand-600/30 dark:bg-brand-600/10">
+        <p className="font-medium">To: {destination}</p>
+        {typeof args.text === "string" && <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-muted">{args.text}</p>}
+      </div>
+    );
+  };
+
   const Actions = ({ e }: { e: Entry }) =>
     canApprove && e.status === "PENDING_APPROVAL" ? (
       <div className="flex gap-2">
@@ -81,7 +106,7 @@ export default function ActivityPage() {
       />
       <Card>
         {!entries ? (
-          <div className="space-y-3 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14" />)}</div>
+          loadError ? <div className="p-4"><ErrorState message={loadError} onRetry={load} /></div> : <div className="space-y-3 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14" />)}</div>
         ) : entries.length === 0 ? (
           <EmptyState icon={<Activity className="size-6" />} title="Nothing here yet" description="Tool calls will be recorded here with who requested and who approved them." />
         ) : (
@@ -93,7 +118,7 @@ export default function ActivityPage() {
               <tbody className="divide-y divide-line">
                 {entries.map((e) => (
                   <tr key={e.id} className="align-top">
-                    <td className="px-5 py-3"><p className="font-medium capitalize">{toolLabel(e.tool)}</p><Details e={e} /></td>
+                    <td className="px-5 py-3"><p className="font-medium capitalize">{toolLabel(e.tool)}</p><SlackDestination e={e} /><Details e={e} /></td>
                     <td className="px-3 py-3 text-muted">{e.user.name}{e.approvedBy && <><br /><span className="text-xs">approved by {e.approvedBy.name}</span></>}</td>
                     <td className="px-3 py-3"><Badge tone={statusTone(e.status)}>{statusLabel(e.status)}</Badge></td>
                     <td className="whitespace-nowrap px-3 py-3 text-muted">{formatDate(e.createdAt)}</td>
@@ -107,6 +132,7 @@ export default function ActivityPage() {
                 <li key={e.id} className="space-y-2 p-4">
                   <div className="flex items-start justify-between gap-2"><p className="font-medium capitalize">{toolLabel(e.tool)}</p><Badge tone={statusTone(e.status)}>{statusLabel(e.status)}</Badge></div>
                   <p className="text-xs text-muted">{e.user.name} · {formatDate(e.createdAt)}{e.approvedBy && ` · approved by ${e.approvedBy.name}`}</p>
+                  <SlackDestination e={e} />
                   <Details e={e} />
                   <Actions e={e} />
                 </li>

@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Activity, BookOpen, Clock, Layers, MessageSquare, Plug } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { timeAgo, toolLabel } from "@/lib/utils";
-import { Badge, Button, Card, EmptyState, PageHeader, Skeleton, statusLabel, statusTone } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Skeleton, statusLabel, statusTone } from "@/components/ui";
 
 interface Stats {
   documents: number;
@@ -22,10 +22,20 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    api<Stats>("/api/stats").then(setStats).catch((e) => setError(e.message));
+  const loadStats = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      setStats(await api<Stats>("/api/stats"));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to load dashboard data.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
+  useEffect(() => { loadStats(); }, [loadStats]);
 
   const cards = stats && [
     { label: "Documents", value: stats.documents, icon: BookOpen, href: "/knowledge" },
@@ -41,10 +51,11 @@ export default function DashboardPage() {
         description="Here is what is happening in your workspace."
         actions={<Link href="/chat"><Button><MessageSquare className="size-4" /> Ask the assistant</Button></Link>}
       />
-      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
+      {error ? <ErrorState message={error} onRetry={loadStats} /> : (
+      <>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {(cards ?? Array.from({ length: 4 })).map((c, i) =>
+        {(cards ?? (loading ? Array.from({ length: 4 }, () => null) : [])).map((c, i) =>
           c ? (
             <Link key={c.label} href={c.href}>
               <Card className="p-5 transition-shadow hover:shadow-md">
@@ -67,13 +78,13 @@ export default function DashboardPage() {
             <h2 className="font-semibold">Recent activity</h2>
             <Link href="/activity" className="text-sm font-medium text-brand-600 hover:underline">View all</Link>
           </div>
-          {!stats ? (
+          {loading ? (
             <div className="space-y-3 p-5">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10" />)}</div>
-          ) : stats.recent.length === 0 ? (
+          ) : stats?.recent.length === 0 ? (
             <EmptyState icon={<Activity className="size-6" />} title="No activity yet" description="Tool calls made by the assistant will show up here." />
           ) : (
             <ul className="divide-y divide-line">
-              {stats.recent.map((r) => (
+              {(stats?.recent ?? []).map((r) => (
                 <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 px-5 py-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium capitalize">{toolLabel(r.tool)}</p>
@@ -90,6 +101,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-2 border-b border-line p-5">
             <Plug className="size-4 text-muted" /><h2 className="font-semibold">Integrations</h2>
           </div>
+          {loading ? <div className="p-5"><Skeleton className="h-24" /></div> : (
           <ul className="divide-y divide-line">
             {(stats?.integrations ?? []).map((i) => (
               <li key={i.id} className="flex items-center justify-between gap-3 px-5 py-3">
@@ -100,13 +112,15 @@ export default function DashboardPage() {
                 <Badge tone={i.configured ? "green" : "amber"}>{i.configured ? "Connected" : "Mock mode"}</Badge>
               </li>
             ))}
-            {!stats && <li className="p-5"><Skeleton className="h-24" /></li>}
           </ul>
+          )}
           {stats?.chunks !== undefined && (
             <div className="flex items-center gap-2 border-t border-line px-5 py-3 text-xs text-muted"><Layers className="size-4" /> {stats.chunks} indexed passages</div>
           )}
         </Card>
       </div>
+      </>
+      )}
     </>
   );
 }

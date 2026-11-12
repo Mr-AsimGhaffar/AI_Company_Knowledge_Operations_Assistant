@@ -1,17 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { GitBranch, MessageSquare, Plug, Sparkles, Ticket } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { Badge, Button, Card, PageHeader, Skeleton, useToast } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Skeleton, useToast } from "@/components/ui";
 
 interface Integration { id: string; name: string; description: string; configured: boolean }
 
 const META: Record<string, { icon: typeof Plug; vars: string[] }> = {
   gemini: { icon: Sparkles, vars: ["GEMINI_API_KEY"] },
   jira: { icon: Ticket, vars: ["JIRA_SITE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN", "JIRA_PROJECT_KEY"] },
-  slack: { icon: MessageSquare, vars: ["SLACK_BOT_TOKEN", "SLACK_DEFAULT_CHANNEL_ID"] },
+  slack: { icon: MessageSquare, vars: ["SLACK_BOT_TOKEN"] },
   github: { icon: GitBranch, vars: ["GITHUB_TOKEN", "GITHUB_REPOS"] },
 };
 
@@ -19,12 +19,21 @@ export default function IntegrationsPage() {
   const { user } = useAuth();
   const toast = useToast();
   const [items, setItems] = useState<Integration[] | null>(null);
+  const [loadError, setLoadError] = useState("");
   const [testing, setTesting] = useState<string | null>(null);
   const [results, setResults] = useState<Record<string, { ok: boolean; message: string }>>({});
 
-  useEffect(() => {
-    api<{ integrations: Integration[] }>("/api/integrations").then((r) => setItems(r.integrations)).catch((e) => toast(e.message, "error"));
-  }, [toast]);
+  const load = useCallback(async () => {
+    setLoadError("");
+    try {
+      const r = await api<{ integrations: Integration[] }>("/api/integrations");
+      setItems(r.integrations);
+    } catch (e) {
+      setItems(null);
+      setLoadError(e instanceof Error ? e.message : "Unable to load integrations.");
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   async function test(id: string) {
     setTesting(id);
@@ -41,7 +50,9 @@ export default function IntegrationsPage() {
   return (
     <>
       <PageHeader title="Integrations" description="Credentials are kept server-side in the .env file and never reach the browser or the model." />
-      <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
+      {loadError ? <ErrorState message={loadError} onRetry={load} /> : items?.length === 0 ? (
+        <EmptyState icon={<Plug className="size-6" />} title="No integrations available" />
+      ) : <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
         {!items && [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-48" />)}
         {items?.map((i) => {
           const meta = META[i.id] ?? { icon: Plug, vars: [] };
@@ -51,7 +62,7 @@ export default function IntegrationsPage() {
             <Card key={i.id} className="flex flex-col p-5">
               <div className="flex items-start justify-between gap-3">
                 <div className="grid size-11 place-items-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-600/15"><Icon className="size-6" /></div>
-                <Badge tone={i.configured ? "green" : "amber"}>{i.configured ? "Connected" : "Mock mode"}</Badge>
+                <Badge tone={i.configured ? "green" : "amber"}>{i.configured ? "Connected" : i.id === "slack" ? "Not configured" : "Mock mode"}</Badge>
               </div>
               <h2 className="mt-4 font-semibold">{i.name}</h2>
               <p className="mt-1 break-words text-sm text-muted">{i.description}</p>
@@ -65,7 +76,7 @@ export default function IntegrationsPage() {
             </Card>
           );
         })}
-      </div>
+      </div>}
     </>
   );
 }

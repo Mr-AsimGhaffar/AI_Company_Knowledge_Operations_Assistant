@@ -41,6 +41,7 @@ export interface ToolCall {
   status: ToolStatus;
   isWrite?: boolean;
   error?: string;
+  result?: unknown;
 }
 
 export interface ChatMessage {

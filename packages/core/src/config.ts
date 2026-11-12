@@ -12,7 +12,6 @@ const schema = z.object({
   JIRA_API_TOKEN: optional,
   JIRA_PROJECT_KEY: optional,
   SLACK_BOT_TOKEN: optional,
-  SLACK_DEFAULT_CHANNEL_ID: optional,
   GITHUB_TOKEN: optional,
   GITHUB_REPOS: optional,
   MCP_DOCS_ROLE: z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).default("EMPLOYEE"),

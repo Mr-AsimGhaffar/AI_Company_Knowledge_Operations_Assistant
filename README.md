@@ -19,11 +19,13 @@ packages/core   Prisma schema, Gemini embeddings, hybrid search, integration cli
 6. `npm run db:seed` (creates the admin from `SEED_ADMIN_EMAIL`, plus search indexes)
 7. `npm run dev` (API on :4000, web on :3000)
 
-Without Jira/Slack/GitHub tokens those tools run in **mock mode**.
+Without Jira/GitHub tokens those tools run in **mock mode**. Slack messaging and directory lookup require a configured token and fail explicitly if it is missing.
 
 ### Slack direct messages
 
-The Slack write tool can send a direct message by recipient email or post to a channel. Add the `chat:write` and `users:read.email` bot token scopes to your Slack app, reinstall it to the workspace, and put the new bot token in `SLACK_BOT_TOKEN`. Use `slack-app-manifest.json` as a reference when creating or updating the app manifest. Messages still require approval before sending.
+The Slack write tool can send a direct message by name, Slack username, user ID, or email, or post to an explicitly specified channel ID. Add the `chat:write`, `users:read`, and `users:read.email` bot token scopes to your Slack app, reinstall it to the workspace, and put the new bot token in `SLACK_BOT_TOKEN`. Restart the API after changing the token or scopes. Use `slack-app-manifest.json` as a reference when creating or updating the app manifest.
+
+Workora searches active human users in the connected Slack workspace. If a name matches multiple users, choose a specific username or user ID; if there is no match, provide a username or email. The recipient is resolved before approval, and the approval request shows the name, username, and Slack user ID. Check these before approving. Messages still require approval before sending. A missing destination never falls back to the default channel. Reject and recreate older pending DMs that have not had their recipients resolved; existing pending channel messages should be reviewed before approval.
 
 ## Roles
 
@@ -34,6 +36,10 @@ The Slack write tool can send a direct message by recipient email or post to a c
 | EMPLOYEE | Chat, read documents visible to them                     |
 
 Each document has a visibility level; retrieval filters on it inside SQL, so restricted text never reaches Gemini.
+
+### Choosing documents in chat
+
+Chat searches all ready documents visible to your role by default. To limit document searches, open **Choose sources** above the message box and select up to 50 ready documents. The selection applies to subsequent messages in the current chat until changed; starting or opening another chat resets it. Choose **Search all documents** to clear the filter. Document selection does not restrict Jira, Slack, or GitHub tools. If a selected document is deleted, becomes unavailable, or is no longer visible to your role, refresh the list and update the selection before sending.
 
 ## Using the MCP server from VS Code / Claude Desktop
 
