@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
+import compression from "compression";
 import rateLimit from "express-rate-limit";
 import multer from "multer";
 import { env } from "./env";
@@ -15,13 +16,44 @@ const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 app.use(helmet());
+app.use(compression({ threshold: 1024, level: 6 }));
 app.use(cors({ origin: env.WEB_ORIGIN, credentials: true }));
 app.use(cookieParser());
 app.use(express.json({ limit: "1mb" }));
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
-app.use("/api/auth/login", rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false }));
-app.use("/api/chat", rateLimit({ windowMs: 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false }));
+
+// LOGIN RATE LIMIT: 20 attempts per 15 minutes
+app.use("/api/auth/login", rateLimit({ 
+  windowMs: 15 * 60 * 1000, 
+  limit: 20, 
+  standardHeaders: true, 
+  legacyHeaders: false,
+  message: "Too many login attempts. Please try again later.",
+  skip: (_req, _res) => process.env.NODE_ENV === "test",
+}));
+
+// DOCUMENT RATE LIMIT: 10 requests per hour
+app.use("/api/documents", rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 10,
+  keyGenerator: (req) => req.user?.id || req.ip || "unknown",
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: "Too many document requests. Maximum 10 per hour.",
+  skip: (_req, _res) => process.env.NODE_ENV === "test",
+}));
+
+// CHAT RATE LIMIT: 30 requests per minute
+app.use("/api/chat", rateLimit({ 
+  windowMs: 60 * 1000, 
+  limit: 30, 
+  keyGenerator: (req) => req.user?.id || req.ip || "unknown",
+  standardHeaders: true, 
+  legacyHeaders: false,
+  message: "Chat rate limited. Wait before sending another message.",
+  skip: (_req, _res) => process.env.NODE_ENV === "test",
+}));
 
 app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);

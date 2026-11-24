@@ -180,11 +180,15 @@ chatRouter.post("/chat", async (req, res) => {
 
     const history = await prisma.message.findMany({
       where: { conversationId: conversation.id },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: "asc" },
       take: HISTORY_LIMIT,
+      select: {
+        role: true,
+        content: true,
+        createdAt: true,
+      },
     });
     const contents: Content[] = history
-      .reverse()
       .filter((m) => m.content.trim())
       .map((m) => ({
         role: m.role === "user" ? "user" : "model",

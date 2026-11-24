@@ -60,6 +60,12 @@ model Document {
   updatedAt    DateTime  @updatedAt
 
   chunks Chunk[]
+
+  // Performance indexes
+  @@index([uploadedById])
+  @@index([visibility])
+  @@index([status])
+  @@index([status, createdAt])
 }
 
 model Chunk {
@@ -117,6 +123,12 @@ model ToolCallLog {
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
+  // Performance indexes
+  @@index([userId])
+  @@index([conversationId])
+  @@index([approvedById])
+  @@index([messageId])
   @@index([createdAt])
   @@index([status])
+  @@index([userId, status])
 }
