@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import {
@@ -72,6 +73,9 @@ function compactArg(value: unknown) {
 export default function ChatPage() {
   const { user } = useAuth();
   const toast = useToast();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlActiveId = searchParams.get('id');
   
   // Load conversations with React Query (parallel with documents)
   const conversationsQuery = useQuery({
@@ -95,6 +99,14 @@ export default function ChatPage() {
   const [selectedDocuments, setSelectedDocuments] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const canApprove = user?.role === "ADMIN" || user?.role === "MANAGER";
+  
+  // Initialize active chat from URL on mount
+  useEffect(() => {
+    if (urlActiveId && !activeId) {
+      setActiveId(urlActiveId);
+      openConversation(urlActiveId);
+    }
+  }, [urlActiveId, activeId]);
   
   // Derive conversations from query
   const conversations = conversationsQuery.data?.conversations ?? [];
@@ -128,6 +140,8 @@ export default function ChatPage() {
         setMessages(r.conversation.messages);
         setPanelOpen(false);
         if (resetSources) setSelectedDocuments([]);
+        // Update URL to persist the active chat
+        router.push(`?id=${id}`, { scroll: false });
       } catch (e) {
         toast(
           e instanceof Error ? e.message : "Unable to open this conversation.",
@@ -137,7 +151,7 @@ export default function ChatPage() {
         setOpeningId(null);
       }
     },
-    [toast],
+    [toast, router],
   );
 
   function newChat() {
@@ -145,6 +159,8 @@ export default function ChatPage() {
     setMessages([]);
     setPanelOpen(false);
     setSelectedDocuments([]);
+    // Clear URL when creating new chat
+    router.push('?', { scroll: false });
   }
 
   async function removeConversation(id: string) {
@@ -240,6 +256,11 @@ export default function ChatPage() {
       }
       if (convId && !streamFailed) {
         await openConversation(convId);
+        conversationsQuery.refetch();
+      } else if (convId && streamFailed) {
+        // Even on error, still open the conversation and show the error message
+        setActiveId(convId);
+        router.push(`?id=${convId}`, { scroll: false });
         conversationsQuery.refetch();
       }
     } catch (err) {
