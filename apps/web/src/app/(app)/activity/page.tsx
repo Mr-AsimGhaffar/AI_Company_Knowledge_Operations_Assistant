@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Activity, Check, Eye, FileJson, X } from "lucide-react";
 import { api, type ToolStatus } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -12,25 +13,51 @@ interface Entry {
   user: { name: string }; approvedBy: { name: string } | null;
 }
 
+interface ActivityResponse {
+  toolCalls: Entry[];
+  hasMore?: boolean;
+  total?: number;
+}
+
 export default function ActivityPage() {
   const { user } = useAuth();
   const toast = useToast();
-  const [entries, setEntries] = useState<Entry[] | null>(null);
-  const [loadError, setLoadError] = useState("");
+  const [page, setPage] = useState(1);
   const [status, setStatus] = useState("");
   const [selectedEntry, setSelectedEntry] = useState<Entry | null>(null);
   const canApprove = user?.role === "ADMIN" || user?.role === "MANAGER";
+  const pageSize = 20;
 
-  const load = useCallback(() => {
-    setLoadError("");
-    api<{ toolCalls: Entry[] }>(`/api/activity${status ? `?status=${status}` : ""}`)
-      .then((r) => setEntries(r.toolCalls))
-      .catch((e) => {
-        setEntries(null);
-        setLoadError(e instanceof Error ? e.message : "Unable to load activity.");
-      });
-  }, [status]);
-  useEffect(() => { load(); }, [load]);
+  // Use React Query for activity data with pagination
+  const activityQuery = useQuery({
+    queryKey: ['activity', page, status],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      params.append('page', String(page));
+      params.append('limit', String(pageSize));
+      if (status) params.append('status', status);
+      return api<ActivityResponse>(`/api/activity?${params}`);
+    },
+  });
+
+  const entries = activityQuery.data?.toolCalls ?? [];
+  const hasMore = activityQuery.data?.hasMore ?? false;
+  const loadError = activityQuery.isError ? (activityQuery.error instanceof Error ? activityQuery.error.message : "Unable to load activity.") : "";
+  const handleStatusChange = (newStatus: string) => {
+    setStatus(newStatus);
+    setPage(1); // Reset to first page when filter changes
+  };
+
+  async function decide(id: string, action: "approve" | "reject") {
+    try {
+      await api(`/api/approvals/${id}/${action}`, { method: "POST" });
+      toast(action === "approve" ? "Approved and executed" : "Rejected");
+      activityQuery.refetch(); // Refetch after decision
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Failed", "error");
+    }
+  }
+
   useEffect(() => {
     if (!selectedEntry) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -39,16 +66,6 @@ export default function ActivityPage() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selectedEntry]);
-
-  async function decide(id: string, action: "approve" | "reject") {
-    try {
-      await api(`/api/approvals/${id}/${action}`, { method: "POST" });
-      toast(action === "approve" ? "Approved and executed" : "Rejected");
-    } catch (e) {
-      toast(e instanceof Error ? e.message : "Failed", "error");
-    }
-    load();
-  }
 
   const Details = ({ e }: { e: Entry }) => (
     <button
@@ -95,7 +112,7 @@ export default function ActivityPage() {
         title="Activity log"
         description="Audit trail of every tool call made by the assistant."
         actions={
-          <Select aria-label="Filter by status" value={status} onChange={(e) => setStatus(e.target.value)} className="w-48">
+          <Select aria-label="Filter by status" value={status} onChange={(e) => handleStatusChange(e.target.value)} className="w-48">
             <option value="">All statuses</option>
             <option value="PENDING_APPROVAL">Pending approval</option>
             <option value="EXECUTED">Executed</option>
@@ -105,8 +122,10 @@ export default function ActivityPage() {
         }
       />
       <Card>
-        {!entries ? (
-          loadError ? <div className="p-4"><ErrorState message={loadError} onRetry={load} /></div> : <div className="space-y-3 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14" />)}</div>
+        {activityQuery.isLoading && entries.length === 0 ? (
+          <div className="space-y-3 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-14" />)}</div>
+        ) : loadError ? (
+          <div className="p-4"><ErrorState message={loadError} onRetry={() => activityQuery.refetch()} /></div>
         ) : entries.length === 0 ? (
           <EmptyState icon={<Activity className="size-6" />} title="Nothing here yet" description="Tool calls will be recorded here with who requested and who approved them." />
         ) : (
@@ -139,6 +158,31 @@ export default function ActivityPage() {
               ))}
             </ul>
           </>
+        )}
+        {entries.length > 0 && (
+          <div className="border-t border-line px-5 py-4 sm:px-7 flex items-center justify-between gap-3">
+            <p className="text-sm text-muted">
+              Page <span className="font-semibold">{page}</span>
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="ghost"
+                disabled={page === 1 || activityQuery.isLoading}
+                onClick={() => setPage(p => Math.max(1, p - 1))}
+                className="text-xs"
+              >
+                Previous
+              </Button>
+              <Button
+                variant="ghost"
+                disabled={!hasMore || activityQuery.isLoading}
+                onClick={() => setPage(p => p + 1)}
+                className="text-xs"
+              >
+                Next
+              </Button>
+            </div>
+          </div>
         )}
       </Card>
       <button

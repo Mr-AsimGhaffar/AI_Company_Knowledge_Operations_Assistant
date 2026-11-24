@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import {
   Bot,
@@ -23,6 +24,7 @@ import {
   Badge,
   Button,
   EmptyState,
+  Skeleton,
   statusLabel,
   statusTone,
   useToast,
@@ -70,54 +72,44 @@ function compactArg(value: unknown) {
 export default function ChatPage() {
   const { user } = useAuth();
   const toast = useToast();
-  const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  
+  // Load conversations with React Query (parallel with documents)
+  const conversationsQuery = useQuery({
+    queryKey: ['conversations'],
+    queryFn: () => api<{ conversations: ConversationItem[] }>("/api/conversations"),
+  });
+  
+  // Load documents in background with React Query
+  const documentsQuery = useQuery({
+    queryKey: ['documents'],
+    queryFn: () => api<{ documents: DocumentItem[] }>("/api/documents"),
+    staleTime: 2 * 60 * 1000,
+  });
+  
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [openingId, setOpeningId] = useState<string | null>(null);
-  const [documents, setDocuments] = useState<DocumentItem[] | null>(null);
-  const [documentError, setDocumentError] = useState("");
-  const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [selectedDocuments, setSelectedDocuments] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const canApprove = user?.role === "ADMIN" || user?.role === "MANAGER";
+  
+  // Derive conversations from query
+  const conversations = conversationsQuery.data?.conversations ?? [];
+  
+  // Derive ready documents from query
+  const readyDocuments = documentsQuery.data?.documents?.filter(
+    (doc) => doc.status === "READY"
+  ) ?? null;
 
-  const loadList = useCallback(
-    () =>
-      api<{ conversations: ConversationItem[] }>("/api/conversations")
-        .then((r) => setConversations(r.conversations))
-        .catch((e) =>
-          toast(
-            e instanceof Error ? e.message : "Unable to load conversations.",
-            "error",
-          ),
-        ),
-    [toast],
-  );
-  const loadDocuments = useCallback(async () => {
-    setLoadingDocuments(true);
-    setDocumentError("");
-    try {
-      const result = await api<{ documents: DocumentItem[] }>("/api/documents");
-      setDocuments(
-        result.documents.filter((document) => document.status === "READY"),
-      );
-    } catch (e) {
-      setDocumentError(
-        e instanceof Error ? e.message : "Unable to load documents.",
-      );
-    } finally {
-      setLoadingDocuments(false);
-    }
-  }, []);
-  useEffect(() => {
-    loadList();
-  }, [loadList]);
-  useEffect(() => {
-    loadDocuments();
-  }, [loadDocuments]);
+  // For backward compatibility with existing JSX that uses 'documents'
+  const documents = readyDocuments;
+  
+  // Helper to refetch documents (for refresh button)
+  const loadDocuments = () => documentsQuery.refetch();
+
   useEffect(() => {
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
@@ -160,7 +152,8 @@ export default function ChatPage() {
       toast(e.message, "error"),
     );
     if (id === activeId) newChat();
-    loadList();
+    // Refetch conversations from React Query
+    conversationsQuery.refetch();
   }
 
   async function send(text: string) {
@@ -245,8 +238,10 @@ export default function ChatPage() {
             }));
         }
       }
-      if (convId && !streamFailed) await openConversation(convId);
-      loadList();
+      if (convId && !streamFailed) {
+        await openConversation(convId);
+        conversationsQuery.refetch();
+      }
     } catch (err) {
       patch((m) => ({
         ...m,
@@ -280,41 +275,52 @@ export default function ChatPage() {
         </Button>
       </div>
       <ul className="flex-1 space-y-1 overflow-y-auto px-3 pb-3">
-        {conversations.map((c) => (
-          <li
-            key={c.id}
-            className={cn(
-              "group flex items-center gap-1 rounded-xl",
-              c.id === activeId
-                ? "bg-brand-50 dark:bg-brand-600/15"
-                : "hover:bg-surface-2",
-            )}
-          >
-            <button
-              onClick={() => openConversation(c.id, c.id !== activeId)}
-              disabled={openingId !== null}
-              aria-busy={openingId === c.id}
-              className="min-w-0 flex-1 cursor-pointer px-3 py-2 text-left disabled:cursor-wait"
+        {conversationsQuery.isLoading && !conversations.length ? (
+          <>
+            {[1, 2, 3].map((i) => (
+              <li key={`skeleton-${i}`} className="rounded-xl bg-surface-2 p-3">
+                <Skeleton className="mb-2 h-4 w-32" />
+                <Skeleton className="h-3 w-24" />
+              </li>
+            ))}
+          </>
+        ) : (
+          conversations.map((c) => (
+            <li
+              key={c.id}
+              className={cn(
+                "group flex items-center gap-1 rounded-xl",
+                c.id === activeId
+                  ? "bg-brand-50 dark:bg-brand-600/15"
+                  : "hover:bg-surface-2",
+              )}
             >
-              <p className="truncate text-sm font-medium">{c.title}</p>
-              <p className="text-xs text-muted">{timeAgo(c.updatedAt)}</p>
-            </button>
-            {openingId === c.id && (
-              <Loader2
-                className="mr-1 size-4 animate-spin text-muted"
-                aria-label="Opening conversation"
-              />
-            )}
-            <button
-              onClick={() => removeConversation(c.id)}
-              className="mr-1 cursor-pointer rounded-lg p-2 text-muted hover:text-red-600 lg:opacity-0 lg:group-hover:opacity-100"
-              aria-label="Delete conversation"
-            >
-              <Trash2 className="size-4" />
-            </button>
-          </li>
-        ))}
-        {!conversations.length && (
+              <button
+                onClick={() => openConversation(c.id, c.id !== activeId)}
+                disabled={openingId !== null}
+                aria-busy={openingId === c.id}
+                className="min-w-0 flex-1 cursor-pointer px-3 py-2 text-left disabled:cursor-wait"
+              >
+                <p className="truncate text-sm font-medium">{c.title}</p>
+                <p className="text-xs text-muted">{timeAgo(c.updatedAt)}</p>
+              </button>
+              {openingId === c.id && (
+                <Loader2
+                  className="mr-1 size-4 animate-spin text-muted"
+                  aria-label="Opening conversation"
+                />
+              )}
+              <button
+                onClick={() => removeConversation(c.id)}
+                className="mr-1 cursor-pointer rounded-lg p-2 text-muted hover:text-red-600 lg:opacity-0 lg:group-hover:opacity-100"
+                aria-label="Delete conversation"
+              >
+                <Trash2 className="size-4" />
+              </button>
+            </li>
+          ))
+        )}
+        {!conversationsQuery.isLoading && !conversations.length && (
           <p className="px-3 py-6 text-center text-sm text-muted">
             No conversations yet
           </p>
@@ -424,19 +430,19 @@ export default function ChatPage() {
                   searches for each message until changed; other integrations
                   are unaffected.
                 </p>
-                {documentError && (
+                {documentsQuery.isError && (
                   <p role="alert" className="mb-2 text-xs text-red-600">
-                    {documentError}
+                    Failed to load documents. Please try again.
                   </p>
                 )}
                 <div className="mb-2 flex flex-wrap gap-2">
                   <Button
                     variant="secondary"
                     className="min-h-8 px-2 text-xs"
-                    disabled={loadingDocuments || sending}
+                    disabled={documentsQuery.isLoading || sending}
                     onClick={loadDocuments}
                   >
-                    {loadingDocuments ? "Loading…" : "Refresh list"}
+                    {documentsQuery.isLoading ? "Loading…" : "Refresh list"}
                   </Button>
                   {selectedDocuments.length > 0 && (
                     <Button
@@ -450,8 +456,8 @@ export default function ChatPage() {
                   )}
                 </div>
                 {documents?.length === 0 &&
-                  !loadingDocuments &&
-                  !documentError && (
+                  !documentsQuery.isLoading &&
+                  !documentsQuery.isError && (
                     <p className="py-2 text-xs text-muted">
                       No ready documents available. Upload a document in the
                       knowledge base and wait for indexing.
