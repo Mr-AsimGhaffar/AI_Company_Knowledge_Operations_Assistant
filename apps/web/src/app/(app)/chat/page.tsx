@@ -105,8 +105,13 @@ export default function ChatPage() {
     if (urlActiveId && !activeId) {
       setActiveId(urlActiveId);
       openConversation(urlActiveId);
+    } else if (!urlActiveId && activeId) {
+      // If URL no longer has an id but activeId is set, clear it (new chat case)
+      setActiveId(null);
+      setMessages([]);
+      setSelectedDocuments([]);
     }
-  }, [urlActiveId, activeId]);
+  }, [urlActiveId]);
   
   // Derive conversations from query
   const conversations = conversationsQuery.data?.conversations ?? [];
@@ -155,12 +160,13 @@ export default function ChatPage() {
   );
 
   function newChat() {
+    // Clear URL first, which triggers useEffect
+    router.push('?', { scroll: false });
+    // Then clear state
     setActiveId(null);
     setMessages([]);
     setPanelOpen(false);
     setSelectedDocuments([]);
-    // Clear URL when creating new chat
-    router.push('?', { scroll: false });
   }
 
   async function removeConversation(id: string) {
