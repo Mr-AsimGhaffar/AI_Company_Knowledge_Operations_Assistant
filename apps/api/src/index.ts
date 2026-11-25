@@ -3,7 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import compression from "compression";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import multer from "multer";
 import { env } from "./env";
 import { authRouter } from "./auth";
@@ -37,7 +37,7 @@ app.use("/api/auth/login", rateLimit({
 app.use("/api/documents", rateLimit({
   windowMs: 60 * 60 * 1000,
   limit: 10,
-  keyGenerator: (req) => req.user?.id || req.ip || "unknown",
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req) || "unknown",
   standardHeaders: true,
   legacyHeaders: false,
   message: "Too many document requests. Maximum 10 per hour.",
@@ -48,7 +48,7 @@ app.use("/api/documents", rateLimit({
 app.use("/api/chat", rateLimit({ 
   windowMs: 60 * 1000, 
   limit: 30, 
-  keyGenerator: (req) => req.user?.id || req.ip || "unknown",
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req) || "unknown",
   standardHeaders: true, 
   legacyHeaders: false,
   message: "Chat rate limited. Wait before sending another message.",
