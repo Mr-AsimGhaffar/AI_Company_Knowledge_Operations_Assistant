@@ -30,6 +30,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!loading && !user && pathname !== "/login") router.replace("/login");
   }, [loading, user, pathname, router]);
 
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setUser(null);
+      if (pathname !== "/login") router.replace("/login");
+    };
+    window.addEventListener("workora:unauthorized", handleUnauthorized);
+    return () => window.removeEventListener("workora:unauthorized", handleUnauthorized);
+  }, [pathname, router]);
+
   const login = useCallback(async (email: string, password: string) => {
     const r = await api<{ user: User }>("/api/auth/login", { method: "POST", json: { email, password } });
     setUser(r.user);

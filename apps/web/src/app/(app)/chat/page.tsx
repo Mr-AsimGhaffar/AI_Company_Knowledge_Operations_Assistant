@@ -18,7 +18,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { api, type ChatMessage, type Citation, type ToolCall } from "@/lib/api";
+import { api, fetchWithAuth, type ChatMessage, type Citation, type ToolCall } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cn, timeAgo, toolLabel } from "@/lib/utils";
 import {
@@ -199,9 +199,8 @@ export default function ChatPage() {
       setMessages((all) => all.map((m) => (m.id === assistantId ? fn(m) : m)));
 
     try {
-      const res = await fetch("/api/chat", {
+      const res = await fetchWithAuth("/api/chat", {
         method: "POST",
-        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           conversationId: activeId ?? undefined,

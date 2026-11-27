@@ -33,22 +33,11 @@ app.use("/api/auth/login", rateLimit({
   skip: (_req, _res) => process.env.NODE_ENV === "test",
 }));
 
-// DOCUMENT RATE LIMIT: 10 requests per hour
-app.use("/api/documents", rateLimit({
-  windowMs: 60 * 60 * 1000,
-  limit: 10,
-  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req) || "unknown",
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: "Too many document requests. Maximum 10 per hour.",
-  skip: (_req, _res) => process.env.NODE_ENV === "test",
-}));
-
 // CHAT RATE LIMIT: 30 requests per minute
 app.use("/api/chat", rateLimit({ 
   windowMs: 60 * 1000, 
   limit: 30, 
-  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req) || "unknown",
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req.ip || "unknown"),
   standardHeaders: true, 
   legacyHeaders: false,
   message: "Chat rate limited. Wait before sending another message.",
